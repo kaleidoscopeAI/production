@@ -1,0 +1,42 @@
+{
+  "configurations": [
+    {
+      "type": "debugpy",
+      "request": "launch",
+      "name": "Launch Program",
+      "program": "${workspaceFolder}/${input:programName}"
+    }
+  ],
+  "inputs": [
+    {
+      "type": "pickString",
+      "id": "programName",
+      "description": "Select the Python file to debug",
+      "options": [
+        "advanced-streaming.py",
+        "chatbot-learning.py",
+        "compute-orchestrator.py",
+        "core-components.py",
+        "engine-system.py",
+        "enhanced-chatbot.py",
+        "evolution-system.py",
+        "kaleidoscope-core.py",
+        "kaleidoscope-monitoring.py",
+        "kaleidoscope-system.py",
+        "knowledge-system.py",
+        "main-system.py",
+        "membrane-core.py",
+        "membrane-system.py",
+        "monitoring-system.py",
+        "node-core.py",
+        "persistence-system.py",
+        "perspective-engine.py",
+        "secure-pipeline.py",
+        "system-consciousness.py",
+        "system-integration.py",
+        "visualization-system.py",
+        "websocket-interface.py"
+      ]
+    }
+  ]
+}

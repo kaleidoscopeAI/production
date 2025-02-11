@@ -1,0 +1,28 @@
+version: "3.8"
+services:
+  ai_engine:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ai
+    ports:
+      - "5000:5000"
+    restart: always
+    networks:
+      - kaleidoscope_network
+
+  chatbot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.chatbot
+    ports:
+      - "8000:8000"
+    restart: always
+    depends_on:
+      - ai_engine
+    networks:
+      - kaleidoscope_network
+
+networks:
+  kaleidoscope_network:
+    driver: bridge
+

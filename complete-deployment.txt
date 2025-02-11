@@ -1,0 +1,320 @@
+# prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'chatbot'
+    static_configs:
+      - targets: ['chatbot:8000']
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+# alertmanager.yml
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'job']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'slack'
+
+receivers:
+- name: 'slack'
+  slack_configs:
+  - api_url: '${SLACK_WEBHOOK_URL}'
+    channel: '#alerts'
+    send_resolved: true
+
+# nginx.conf
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream chatbot {
+        server chatbot:8000;
+    }
+
+    server {
+        listen 80;
+        server_name artificialthinker.com;
+        return 301 https://$host$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name artificialthinker.com;
+
+        ssl_certificate /etc/nginx/ssl/live/artificialthinker.com/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/live/artificialthinker.com/privkey.pem;
+        ssl_trusted_certificate /etc/nginx/ssl/live/artificialthinker.com/chain.pem;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 10m;
+        ssl_session_tickets off;
+        ssl_stapling on;
+        ssl_stapling_verify on;
+        resolver 8.8.8.8 8.8.4.4 valid=300s;
+        resolver_timeout 5s;
+
+        add_header Strict-Transport-Security "max-age=63072000" always;
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+
+        location / {
+            proxy_pass http://chatbot;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_buffering off;
+            proxy_read_timeout 300s;
+        }
+
+        location /metrics {
+            proxy_pass http://chatbot:8000/metrics;
+            auth_basic "Metrics";
+            auth_basic_user_file /etc/nginx/.htpasswd;
+        }
+    }
+}
+
+# docker-compose.override.yml
+version: '3.8'
+
+services:
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - /var/log:/var/log
+      - ./promtail.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8080:8080"
+
+volumes:
+  alertmanager_data:
+  loki_data:
+
+# promtail.yml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: system
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          __path__: /var/log/*log
+
+  - job_name: containers
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: containerlogs
+          __path__: /var/lib/docker/containers/*/*log
+
+# grafana/dashboards/chatbot.json
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max", "min"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(response_time_seconds_sum[5m]) / rate(response_time_seconds_count[5m])",
+          "interval": "",
+          "legendFormat": "Response Time",
+          "refId": "A"
+        }
+      ],
+      "title": "Response Time",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["chatbot"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Chatbot Dashboard",
+  "version": 0
+}
