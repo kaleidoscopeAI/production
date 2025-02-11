@@ -1,0 +1,25 @@
+# Generate response
+        inputs = self.tokenizer(prompt, return_tensors="pt", padding=True)
+        outputs = self.model.generate(
+            inputs["input_ids"],
+            max_length=self.config.max_length,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            frequency_penalty=self.config.frequency_penalty,
+            presence_penalty=self.config.presence_penalty,
+            pad_token_id=self.tokenizer.pad_token_id
+        )
+        
+        response_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Update conversation history
+        if client_id not in self.conversation_history:
+            self.conversation_history[client_id] = []
+        self.conversation_history[client_id].append({
+            'user': message,
+            'bot': response_text,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        return {
+            
